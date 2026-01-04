@@ -62,6 +62,13 @@ repos:
     hooks:
       - id: prettier
         files: '^web/.*\.(ts|tsx|json|css)$'
+        stages: [pre-commit]
+        args: ['--write']
+      - id: prettier
+        name: prettier (check-only for CI)
+        files: '^web/.*\.(ts|tsx|json|css)$'
+        stages: [manual]
+        args: ['--check']
 
   - repo: local
     hooks:
