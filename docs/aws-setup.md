@@ -5,9 +5,10 @@ Complete guide for deploying the Rewards App to AWS ECS Fargate.
 ## Prerequisites
 
 1. **AWS Account**: Active AWS account with billing enabled
-2. **mise**: Tool version manager (installs AWS CLI, Terraform, etc.)
-3. **GitHub CLI**: For automated secrets setup
-4. **Docker**: For local image builds (optional)
+2. **AWS SSO**: IAM Identity Center configured with appropriate permissions
+3. **mise**: Tool version manager (installs AWS CLI, Terraform, etc.)
+4. **GitHub CLI**: For automated secrets setup
+5. **Docker**: For local image builds (optional)
 
 All required tools (AWS CLI, Terraform) are defined in `.mise.toml` and installed automatically.
 
@@ -23,20 +24,153 @@ curl https://mise.run | sh
 mise install
 ```
 
+## AWS SSO Setup
+
+### Configure SSO on AWS Console
+
+If your AWS account doesn't have SSO configured yet:
+
+1. **Navigate to AWS IAM Identity Center** (formerly AWS SSO):
+   - Open AWS Console
+   - Search for "IAM Identity Center" or "AWS Single Sign-On"
+
+2. **Enable IAM Identity Center**:
+   - Click "Enable" if not already enabled
+   - Choose your region (typically `ca-west-1`)
+
+3. **Configure Identity Source**:
+   - Go to "Settings" in IAM Identity Center
+   - Under "Identity source", confirm the identity source type:
+     - **Identity Center directory** (default): Built-in directory for managing users
+     - **Active Directory**: Connect to your on-premises or AWS Managed Microsoft AD
+     - **External identity provider**: Connect to SAML 2.0 IdP (Okta, Azure AD, etc.)
+   - For most cases, use **Identity Center directory**
+
+4. **Customize AWS Access Portal URL**:
+   - In "Settings", locate "AWS access portal"
+   - Click "Customize" next to the default portal URL
+   - Enter a custom subdomain (e.g., `rewards-app` or your company name)
+   - The URL will become: `https://<your-custom-name>.awsapps.com/start`
+   - Click "Save changes"
+   - Note: This can only be set once and cannot be changed later
+
+5. **Create Permission Sets**:
+
+   Create separate permission sets for different access levels:
+
+   **a. Superuser/Administrator Permission Set**:
+   - Go to "Permission sets"
+   - Click "Create permission set"
+   - Choose "Predefined permission set"
+   - Select `AdministratorAccess`
+   - Name: `SuperuserAccess`
+   - Description: "Full administrative access to AWS account"
+   - Session duration: 12 hours (or as per security policy)
+   - Click "Next" and "Create"
+
+   **b. Developer Permission Set**:
+   - Click "Create permission set"
+   - Choose "Predefined permission set"
+   - Select `PowerUserAccess` (full access except IAM/Organizations)
+   - Name: `DeveloperAccess`
+   - Description: "Developer access with limited IAM permissions"
+   - Session duration: 8 hours
+   - Click "Next" and "Create"
+
+   **c. Read-Only Permission Set** (Optional):
+   - Click "Create permission set"
+   - Choose "Predefined permission set"
+   - Select `ViewOnlyAccess`
+   - Name: `ReadOnlyAccess`
+   - Description: "Read-only access for auditing and monitoring"
+   - Session duration: 4 hours
+   - Click "Next" and "Create"
+
+6. **Create Users**:
+
+   Create users for each team member:
+
+   - Go to "Users" in IAM Identity Center
+   - Click "Add user"
+   - Enter user details:
+     - **Username**: firstname.lastname
+     - **Email address**: User's work email
+     - **First name**: User's first name
+     - **Last name**: User's last name
+     - **Display name**: Full name
+   - Click "Next"
+   - Choose "Add user to groups" (optional) or skip
+   - Click "Next" and "Add user"
+   - User receives an email invitation to set up password
+
+   Repeat for each team member
+
+7. **Assign Users to AWS Account with Appropriate Roles**:
+
+   Assign users to your AWS account with the appropriate permission set:
+
+   **Assign Superuser Access**:
+   - Go to "AWS accounts"
+   - Select your AWS account
+   - Click "Assign users or groups"
+   - Select the "Users" tab
+   - Check the box next to superuser/admin users
+   - Click "Next"
+   - Select the `SuperuserAccess` permission set
+   - Click "Next" and "Submit"
+
+   **Assign Developer Access**:
+   - Repeat the above steps
+   - Select developer users
+   - Choose the `DeveloperAccess` permission set
+   - Click "Submit"
+
+   **Assign Read-Only Access** (if applicable):
+   - Repeat for users who need read-only access
+   - Choose the `ReadOnlyAccess` permission set
+
+8. **Get SSO Start URL**:
+   - Go to "Dashboard" in IAM Identity Center
+   - Copy the "AWS access portal URL" (e.g., `https://rewards-app.awsapps.com/start`)
+   - Share this URL with your team
+   - Users will use this URL to access AWS accounts
+
 ## AWS CLI Setup
 
-### Configure Credentials
+### Configure AWS SSO
 
 ```bash
-aws configure
+aws configure sso
 ```
 
 Enter:
 
-- AWS Access Key ID
-- AWS Secret Access Key
-- Default region: `us-east-1`
+- SSO session name: `rewards-app` (or your preferred name)
+- SSO start URL: Your AWS SSO portal URL from previous step (e.g., `https://rewards-app.awsapps.com/start`)
+- SSO region: The region where your SSO is configured (e.g., `ca-west-1`)
+- SSO registration scopes: `sso:account:access` (default)
+
+The CLI will open your browser to authenticate. After authentication:
+
+- Select your AWS account from the list
+- Choose the appropriate IAM role (e.g., `AdministratorAccess`)
+- Default region: `ca-west-1`
 - Default output format: `json`
+- CLI profile name: `default` (or your preferred profile name)
+
+### Login to SSO Session
+
+SSO credentials expire after a period. To refresh:
+
+```bash
+aws sso login
+```
+
+Or, if using a named profile:
+
+```bash
+aws sso login --profile rewards-app
+```
 
 ### Verify Configuration
 
@@ -45,6 +179,78 @@ aws sts get-caller-identity
 ```
 
 Should output your account ID and ARN.
+
+## IAM Permissions for Terraform
+
+### Permission Requirements
+
+Terraform infrastructure deployment requires different permission levels
+depending on the operation:
+
+**PowerUserAccess** (sufficient for):
+
+- `terraform init` - Backend setup
+- `terraform plan` - State validation
+- `terraform output` - Reading outputs
+- `terraform state` - State management
+
+**AdministratorAccess** (required for):
+
+- `terraform apply` - Creates IAM roles and OIDC providers
+- `terraform destroy` - Deletes IAM resources
+
+PowerUserAccess excludes IAM and Organizations management, which prevents
+creation of:
+
+- ECS task execution roles
+- ECS task application roles
+- GitHub Actions OIDC provider
+
+### Configure Admin Profile
+
+If you only have PowerUserAccess configured, add an AdministratorAccess profile:
+
+```bash
+aws configure sso --profile admin
+```
+
+Enter:
+
+- SSO session name: `rewards-app-admin`
+- SSO start URL: Your AWS SSO portal URL (e.g., `https://rewards-app.awsapps.com/start`)
+- SSO region: `ca-west-1`
+- Select the **AdministratorAccess** permission set
+- Default region: `ca-west-1`
+- Default output format: `json`
+
+### Verify Permissions
+
+Check current profile:
+
+```bash
+aws sts get-caller-identity
+```
+
+Test IAM permissions:
+
+```bash
+# Should succeed with AdministratorAccess, fail with PowerUserAccess
+aws iam list-roles --max-items 1
+```
+
+### Using Admin Profile
+
+Set for entire session:
+
+```bash
+export AWS_PROFILE=admin
+```
+
+Or use inline for specific commands:
+
+```bash
+AWS_PROFILE=admin terraform apply tfplan
+```
 
 ## Cost Management
 
@@ -136,8 +342,12 @@ export TF_VAR_rails_master_key=$(cat api/config/master.key)
 
 ```bash
 terraform plan -out=tfplan
-terraform apply tfplan
+AWS_PROFILE=admin terraform apply tfplan
 ```
+
+**Note**: `terraform apply` requires AdministratorAccess to create IAM
+roles and OIDC providers. See
+[IAM Permissions for Terraform](#iam-permissions-for-terraform).
 
 Review the plan carefully before applying.
 
@@ -229,8 +439,10 @@ curl http://<web-ip>
 
 ```bash
 cd terraform
-terraform destroy -auto-approve
+AWS_PROFILE=admin terraform destroy -auto-approve
 ```
+
+**Note**: Requires AdministratorAccess to delete IAM resources.
 
 Removes:
 
@@ -257,6 +469,35 @@ aws dynamodb delete-table --table-name rewards-app-tf-locks
 ## Troubleshooting
 
 ### Terraform Errors
+
+#### Error: AccessDenied for IAM operations
+
+Symptoms:
+
+```text
+Error: creating IAM Role: operation error IAM: CreateRole,
+AccessDenied: User is not authorized to perform: iam:CreateRole
+
+Error: creating IAM OIDC Provider:
+AccessDenied: User is not authorized to perform: iam:CreateOpenIDConnectProvider
+```
+
+Solution:
+
+Use AdministratorAccess profile for `terraform apply` and `terraform destroy`:
+
+```bash
+# Configure admin profile if not already done
+aws configure sso --profile admin
+
+# Verify profile has IAM permissions
+aws iam list-roles --max-items 1 --profile admin
+
+# Apply with admin profile
+AWS_PROFILE=admin terraform apply tfplan
+```
+
+PowerUserAccess cannot create IAM resources. See [IAM Permissions for Terraform](#iam-permissions-for-terraform).
 
 #### Error: Backend initialization failed
 
