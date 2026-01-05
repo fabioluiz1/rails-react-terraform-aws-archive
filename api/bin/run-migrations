@@ -1,0 +1,35 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Run database migrations for production
+# This script is designed to be run as a one-off ECS task before deployment
+
+require_relative "../config/boot"
+require_relative "../config/environment"
+
+puts "Running database migrations..."
+
+begin
+  # Run main database migrations
+  puts "\n==> Running primary database migrations"
+  ActiveRecord::Tasks::DatabaseTasks.migrate
+
+  # Run queue database migrations (Solid Queue)
+  puts "\n==> Running queue database migrations"
+  ActiveRecord::Base.connected_to(role: :writing, shard: :queue) do
+    ActiveRecord::Tasks::DatabaseTasks.migrate
+  end
+
+  # Run cable database migrations (Solid Cable)
+  puts "\n==> Running cable database migrations"
+  ActiveRecord::Base.connected_to(role: :writing, shard: :cable) do
+    ActiveRecord::Tasks::DatabaseTasks.migrate
+  end
+
+  puts "\n✅ All migrations completed successfully!"
+  exit 0
+rescue StandardError => e
+  puts "\n❌ Migration failed: #{e.message}"
+  puts e.backtrace.join("\n")
+  exit 1
+end
