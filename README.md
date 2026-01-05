@@ -125,6 +125,74 @@ mise run setup
 mise run lint
 ```
 
+## Deployment
+
+### AWS ECS/Fargate Deployment
+
+Deployments are automated via GitHub Actions on push to `main`:
+
+```bash
+git push origin main
+```
+
+The deployment workflow:
+
+1. Builds Docker images for web and API
+2. Pushes images to ECR
+3. Runs database migrations
+4. Updates ECS Fargate services
+5. Outputs public IPs
+
+### Infrastructure Setup
+
+One-time setup to create AWS infrastructure:
+
+```bash
+# 0. Install tools (AWS CLI, Terraform, etc.)
+mise install
+
+# 1. Bootstrap Terraform backend
+cd terraform
+./bootstrap.sh
+
+# 2. Configure Terraform
+export TF_VAR_rails_master_key=$(cat ../api/config/master.key)
+
+# 3. Deploy infrastructure
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+terraform init -backend-config="bucket=rewards-app-tf-state-${ACCOUNT_ID}"
+terraform apply
+
+# 4. Setup GitHub secrets (automated)
+./setup-github-secrets.sh
+```
+
+### Cleanup
+
+Destroy all AWS infrastructure:
+
+```bash
+cd terraform
+terraform destroy -auto-approve
+```
+
+### Documentation
+
+- [AWS Setup Guide](docs/aws-setup.md) - Complete infrastructure setup
+- [Terraform README](terraform/README.md) - Terraform usage and modules
+- [Deployment Guide](docs/deployment.md) - Deployment, rollback, troubleshooting
+
+### Cost Estimate
+
+Demo infrastructure: **~$59/month**
+
+- ECS Fargate Spot: ~$9/month
+- RDS PostgreSQL: ~$12/month
+- NAT Gateway: ~$32/month
+- CloudWatch + Storage: ~$6/month
+
+Budget alert configured at $10/month threshold.
+
 ## Contributing
 
 Start work on a GitHub issue:
@@ -145,24 +213,24 @@ Creates a worktree, fetches issue details, generates a plan, and commits setup.
 
 #### Infrastructure
 
-- [ ] #3 Docker Compose + Postgres + Hadolint
+- [x] #3 Docker Compose + Postgres + Hadolint
 
 #### Backend
 
-- [ ] #4 Rails API Skeleton
-- [ ] #5 RuboCop + Minitest pre-commit hooks
-- [ ] #6 Rails API Dockerfile
+- [x] #4 Rails API Skeleton
+- [x] #5 RuboCop + Minitest pre-commit hooks
+- [x] #6 Rails API Dockerfile
 
 #### Frontend
 
-- [ ] #7 React + TypeScript Skeleton
-- [ ] #8 ESLint + Prettier + Vitest pre-commit hooks
-- [ ] #9 React Dockerfile
+- [x] #7 React + TypeScript Skeleton
+- [x] #8 ESLint + Prettier + Vitest pre-commit hooks
+- [x] #9 React Dockerfile
 
 #### DevOps
 
-- [ ] #10 GitHub Actions CI
-- [ ] #11 Deploy to AWS ECS/Fargate (CD)
+- [x] #10 GitHub Actions CI
+- [x] #11 Deploy to AWS ECS/Fargate (CD)
 
 #### Observability
 
