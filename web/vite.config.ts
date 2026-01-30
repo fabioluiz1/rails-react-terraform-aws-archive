@@ -32,7 +32,7 @@ export default defineConfig(({ mode }) => {
     // Define environment variables that will be available in the app
     define: {
       "import.meta.env.VITE_API_URL": JSON.stringify(
-        env.VITE_API_URL || "http://localhost:3000",
+        env.VITE_API_URL || "http://localhost:3000/api/v1",
       ),
       "import.meta.env.VITE_SENTRY_DSN": JSON.stringify(env.VITE_SENTRY_DSN),
       "import.meta.env.VITE_GIT_SHA": JSON.stringify(env.VITE_GIT_SHA),

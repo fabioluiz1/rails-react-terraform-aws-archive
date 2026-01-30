@@ -4,6 +4,10 @@ Rails.application.routes.draw do
       get "users/me", to: "users#me"
       resources :rewards, only: [ :index ]
       resources :redemptions, only: [ :index, :create ]
+
+      namespace :admin do
+        resources :redemptions, only: [ :index ]
+      end
     end
   end
 
